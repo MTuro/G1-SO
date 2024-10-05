@@ -26,12 +26,14 @@ pid_t processes[NUM_PROCESSES];                 // array de PIDs
 int program_counter[NUM_PROCESSES];            // contador cada processo
 int *current_process;                         // processo em execucao (memoria compartilhada)
 int pipes[NUM_PROCESSES][2];                 // descritor de pipes para comunicação
+__sighandler_t cont;
+__sighandler_t stop;
 
 void D1_handler(int signum) {
     for (int i = 0; i < NUM_PROCESSES; i++) {
         if (blocked_process[0][i] == 1) {
             blocked_process[0][i] = 0;
-            write(pipes[i][1], "D1", 3); // Notifica o processo via pipe
+            kill(processes[i], SIGCONT); // Retoma o processo diretamente
             printf("Processo %d desbloqueado pelo dispositivo D1\n", i);
             return;
         }
@@ -42,7 +44,7 @@ void D2_handler(int signum) {
     for (int i = 0; i < NUM_PROCESSES; i++) {
         if (blocked_process[1][i] == 1) {
             blocked_process[1][i] = 0;
-            write(pipes[i][1], "D2", 3); // Notifica o processo via pipe
+            kill(processes[i], SIGCONT); // Retoma o processo diretamente
             printf("Processo %d desbloqueado pelo dispositivo D2\n", i);
             return;
         }
@@ -50,35 +52,37 @@ void D2_handler(int signum) {
 }
 
 void TS_handler(int signum) {
-    // nao sei
+
 }
 
 void sigcont_handler(int signum) {
     printf("Processo %d: Retomando execução\n", *current_process);
+    cont(signum);
 }
 
 void sigstop_handler(int signum) {
     printf("Processo %d: Pausado pelo Kernel\n", *current_process);
+    stop(signum);
 }
 
 void syscall_sim(int device, char* operation) {
     /*
         Simula uma chamada para o kernel de término de processo
     */
-    if (strcmp(operation, "Read") == 0) {
+    printf("Dispositivo D%d: Solicitação de %s \n", device, operation);
+    if (device == 0) {
         kill(*current_process, SIGUSR1);
-        printf("Dispositivo D%d: Solicitação de Read\n", device);
-    } else if (strcmp(operation, "Write") == 0) {
+    } 
+    else if (device == 1) {
         kill(*current_process, SIGUSR2);
-        printf("Dispositivo D%d: Solicitação de Write\n", device);
     }
     printf("Processo %d bloqueado no dispositivo D%d\n", *current_process, device);
 }
 
 void process_application(int id) {
-    signal(SIGCONT, sigcont_handler); // Define o handler para SIGCONT
-    signal(SIGSTOP, sigstop_handler); // Define o handler para SIGSTOP
-
+    cont = signal(SIGCONT, sigcont_handler); // Define o handler para SIGCONT
+    pause();
+    stop = signal(SIGSTOP, sigstop_handler); // Define o handler para SIGSTOP
     int device, chance;
     char* operation;
 
@@ -98,27 +102,9 @@ void process_application(int id) {
             printf("Processo %d: Realizando syscall, entrando em espera...\n", id);
             syscall_sim(device, operation);
             blocked_process[device][id] = 1;
-            kill(id, SIGSTOP);
-            pause();
+            raise(SIGSTOP);
         }
 
-        // Verifica se há mensagens no pipe
-        char buffer[4];
-        int bytes_read = read(pipes[id][0], buffer, sizeof(buffer));
-        if (bytes_read > 0) {
-            buffer[bytes_read] = '\0';
-            if (strcmp(buffer, "D1") == 0) {
-                printf("Processo %d: Recebeu notificação de desbloqueio do dispositivo D1\n", id);
-                blocked_process[0][id] = 0;  // Desbloqueia o processo
-            }
-            else if(strcmp(buffer, "D2") == 0){
-                printf("Processe %d: Recebeu notificação de desbloqueio do dispositivo D2\n", id);
-                blocked_process[1][id] = 0; 
-            }
-            else{
-                printf("Dispositivo não reconhecido.\n");
-            }
-        }
     }
     printf("Processo %d: Finalizado\n", id);
     exit(0);
@@ -127,7 +113,6 @@ void process_application(int id) {
 void create_processes() {
     for (int i = 0; i < NUM_PROCESSES; i++) {
         program_counter[i] = 0;
-        pipe(pipes[i]); // Cria um pipe para cada processo
         processes[i] = fork(); // Cria um processo filho
 
         if (processes[i] == 0) {
@@ -200,8 +185,8 @@ void controller_sim() {
 }
 
 int main() {
-    signal(SIGRTMIN, TS_handler); // Define handler para SIGRTMIN (time slice)
-    signal(SIGUSR1, D1_handler); // Define handler para SIGUSR1 (D1)
+    signal(SIGRTMIN, TS_handler);  // Define handler para SIGRTMIN (time slice)
+    signal(SIGUSR1, D1_handler);  // Define handler para SIGUSR1 (D1)
     signal(SIGUSR2, D2_handler); // Define handler para SIGUSR2 (D2)
 
     int shm_id = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0666);
