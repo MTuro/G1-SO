@@ -8,6 +8,17 @@
 #include <time.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <semaphore.h>
+
+typedef struct {
+    int pid;                  // ID do processo
+    int pc;                   // Contador de programa
+    char state[10];           // Estado do processo (Executando, Pronto, Bloqueado)
+    char device[2];           // Dispositivo de E/S (D1 ou D2) se bloqueado
+    char operation[2];        // Operação de E/S (R, W ou X)
+    int timeslice_count;      // Quantas vezes foi interrompido pelo timeslice
+    int io_access_count;      // Quantas vezes acessou os dispositivos de E/S
+} PCB;
 
 /*
 ele ta alternando entre os processos, mas acredito que não esteja continuando o processo de verdade
@@ -26,6 +37,8 @@ pid_t processes[NUM_PROCESSES];                 // array de PIDs
 int program_counter[MAX_ITER];            // contador cada processo
 int *current_process;                         // processo em execucao (memoria compartilhada)
 int pipes[NUM_PROCESSES][2];                 // descritor de pipes para comunicação
+int *finished_processes; 
+sem_t semaforo;
 
 void D1_handler(int signum) {
     for (int i = 0; i < NUM_PROCESSES; i++) {
@@ -101,6 +114,10 @@ void process_application(int id) {
         }
     }
     printf("Processo %d: Finalizado\n", id);
+    sem_wait(&semaforo);            // Trava o semáforo
+    (*finished_processes)++;       // Incrementa o contador
+    sem_post(&semaforo);          // Libera o semáforo
+
     exit(0);
 }
 
@@ -117,43 +134,30 @@ void create_processes() {
 }
 
 void kernel_sim() {
-    /*
-        Gerencia 3 a 5 processos e intercala suas execuções
-        a depender se estão esperando pelo término de uma operação
-        de leitura ou escrita em um dispositivo E/S simulado (D1 e D2)
-        ou o sinal de aviso do término de sua fatia de tempo
-    */
     create_processes(); // Cria os processos de aplicação
     for (int i = 0; i < NUM_PROCESSES; i++){
-        kill(processes[i], SIGSTOP);
+        kill(processes[i], SIGSTOP); // Pausa os processos inicialmente
     }
 
-    while (1) {
-        // Verifica se todos os processos já terminaram
-        int all_finished = 1;
-        for (int i = 0; i < NUM_PROCESSES; i++) {
-            if (program_counter[i] < MAX_ITER) {
-                all_finished = 0; // Se algum processo não terminou, setar como não finalizado
-                break;
-            }
-        }
+    while(*finished_processes < NUM_PROCESSES){
+        printf("Processos finalizados: %d\n", *finished_processes);
 
-        if (all_finished) {
-            printf("Todos os processos finalizaram. Encerrando o kernel.\n");
-            break;
+        if (blocked_process[0][*current_process] == 0 && blocked_process[1][*current_process] == 0) {
+            kill(processes[*current_process], SIGCONT); // Retoma a execução do processo atual
         }
-
-        printf("Kernel: Executando processo %d\n", *current_process);
-        kill(processes[*current_process], SIGCONT); // Retoma a execução do processo atual
 
         sleep(TIME_SLICE);
-        // Após o time slice, pausa o processo
-        kill(processes[*current_process], SIGSTOP); // Pausa o processo
-        printf("Kernel: Pausando processo %d\n", *current_process);
 
-        *current_process = (*current_process + 1) % NUM_PROCESSES;
+        if (program_counter[*current_process] < MAX_ITER && 
+            blocked_process[0][*current_process] == 0 && blocked_process[1][*current_process] == 0) {
+            kill(processes[*current_process], SIGSTOP); // Pausa o processo se não estiver bloqueado
+        }
+
+        *current_process = (*current_process + 1) % NUM_PROCESSES; // Passa para o próximo processo
+        printf("Current process: %d\n", *current_process);
     }
 }
+
 
 void controller_sim() {
     /*
@@ -181,17 +185,27 @@ void controller_sim() {
     }
 }
 
+void handler(){
+    printf("morri");
+}
+
 int main() {
     signal(SIGRTMIN, TS_handler);  // Define handler para SIGRTMIN (time slice)
     signal(SIGUSR1, D1_handler);  // Define handler para SIGUSR1 (D1)
     signal(SIGUSR2, D2_handler); // Define handler para SIGUSR2 (D2)
+    signal(SIGSEGV, handler);
+
+    sem_init(&semaforo, 1, 1);
 
     int shm_id = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0666);
     current_process = (int *)shmat(shm_id, NULL, 0);
     *current_process = 0;  // Inicializa o processo atual
 
-    int shm_program[NUM_PROCESSES];
+    int shm_finished = shmget(1111, sizeof(int), IPC_CREAT | 0666);
+    finished_processes = (int *)shmat(shm_finished, NULL, 0);
+    *finished_processes = 0;
 
+    // int shm_program[NUM_PROCESSES];
     // for (int i = 0; i < NUM_PROCESSES; i++){
     //     shm_program[i] = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0666);
     //     program_counter[i] = (int *)shmat(shm_program[i], NULL, 0);
@@ -216,6 +230,9 @@ int main() {
 
     shmdt(current_process);  // Desanexa a memória compartilhada
     shmctl(shm_id, IPC_RMID, NULL);  // Remove o segmento de memória compartilhada
+
+    shmdt(finished_processes);  // Desanexa a memória compartilhada
+    shmctl(shm_finished, IPC_RMID, NULL);  // Remove o segmento de memória compartilhada
 
     // for (int i = 0; i < NUM_PROCESSES; i ++){
     //     shmdt(program_counter[i]);  // Desanexa a memória compartilhada
