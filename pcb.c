@@ -16,6 +16,7 @@
 #define MAX_PROCESSES 3
 #define MAX_PC 10
 #define TIME_SLICE_ALARM 3
+#define QUEUE_SIZE MAX_PROCESSES
 
 // Estrutura PCB (Process Control Block)
 typedef struct {
@@ -31,12 +32,33 @@ int *current_process = 0; // Processo que está executando
 // Pipes para comunicação entre kernel_sim e inter_controller_sim
 int pipefd[2];
 
+int device1_fila[QUEUE_SIZE], device2_fila[QUEUE_SIZE];
+int d1_topo = 0, d1_fim = 0, d2_topo = 0, d2_fim = 0;
+
+void insere_fila(int *fila, int *fim, int pid) {
+    fila [*fim] = pid;
+    *fim = (*fim + 1) % QUEUE_SIZE;
+}
+
+int remove_fila(int *fila, int *cabeca) {
+    int pid = fila[*cabeca];
+    *cabeca = (*cabeca + 1) % QUEUE_SIZE;
+    return pid;
+}
 
 // Simulação de syscall
 void sigrtmin_handler(int sig) {
     printf("Processo %d: realizando chamada de sistema (syscall)\n", *current_process);
     pcbs[*current_process].state = 2; // Processo bloqueado
     pcbs[*current_process].waiting_device = rand() % 2 + 1; // Dispositivo aleatório D1 ou D2
+
+    if(pcbs[*current_process].waiting_device == 1){
+        insere_fila(device1_fila, &d1_fim, *current_process);
+    }
+    else{
+        insere_fila(device2_fila, &d2_fim, *current_process);
+    }
+
     raise(SIGSTOP); // Para o processo
 }
 
@@ -59,16 +81,26 @@ void irq_handler(int sig) {
             kill(pcbs[*current_process].pid, SIGCONT);
             pcbs[*current_process].state = 1;
         }
-    } else if (sig == SIGUSR1 || sig == SIGUSR2) {
-        for (int i = 0; i < MAX_PROCESSES; i++) {
-            if (pcbs[i].state == 2 && ((sig == SIGUSR1 && pcbs[i].waiting_device == 1) || 
-                                        (sig == SIGUSR2 && pcbs[i].waiting_device == 2))) {
-                printf("Processo %d desbloqueado após E/S (Dispositivo %d)\n", i, pcbs[i].waiting_device);
-                pcbs[i].state = 0;
-                pcbs[i].waiting_device = 0;
-            }
+    } 
+    else if (sig == SIGUSR1) {
+        // Desbloquear processo esperando pelo dispositivo 1 (D1)
+        if (d1_topo != d1_fim) {
+            int pid = remove_fila(device1_fila, &d1_topo);
+            printf("Processo %d desbloqueado após E/S (Dispositivo 1)\n", pid);
+            pcbs[pid].state = 0;
+            pcbs[pid].waiting_device = 0;
+        }
+    } 
+    else if (sig == SIGUSR2) {
+        // Desbloquear processo esperando pelo dispositivo 2 (D2)
+        if (d2_topo != d2_fim) {
+            int pid = remove_fila(device2_fila, &d2_topo);
+            printf("Processo %d desbloqueado após E/S (Dispositivo 2)\n", pid);
+            pcbs[pid].state = 0;
+            pcbs[pid].waiting_device = 0;
         }
     }
+
 }
 
 
@@ -84,7 +116,9 @@ void create_processes() {
                 pcbs[i].state = 1;
                 printf("Processo %d: executando, PC=%d\n", i, pcbs[i].pc);
                 sleep(1);  // Simula tempo de execução
-                if (rand() % 100 < 15) {  // Simula uma syscall aleatória
+                int x;
+                if ( x = (rand() % 100) < 30) {  // Simula uma syscall aleatória
+                    printf("%d\n", x);
                     raise(SIGRTMIN);  // Envia o sinal de syscall
                 }
             }
