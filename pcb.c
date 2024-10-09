@@ -117,7 +117,8 @@ void create_processes() {
                 printf("Processo %d: executando, PC=%d\n", i, pcbs[i].pc);
                 sleep(1);  // Simula tempo de execução
                 int x;
-                if ( x = (rand() % 100) < 30) {  // Simula uma syscall aleatória
+                srand(time(NULL));
+                if (( x = (rand() % 100)) < 20) {  // Simula uma syscall aleatória
                     printf("%d\n", x);
                     raise(SIGRTMIN);  // Envia o sinal de syscall
                 }
@@ -153,6 +154,7 @@ void kernel_sim() {
         if (buffer[0] == 'T') {  // Timer IRQ (Time Slice)
             raise(SIGALRM);
         } else if (buffer[0] == 'I' && buffer[1] == '1') {  // Interrupção de E/S (Dispositivo D1)
+            printf("recebendo IRQ1\n");
             raise(SIGUSR1);
         } else if (buffer[0] == 'I' && buffer[1] == '2') {  // Interrupção de E/S (Dispositivo D2)
             raise(SIGUSR2);
@@ -162,16 +164,17 @@ void kernel_sim() {
 
 
 void inter_controller_sim() {
-    srand(time(NULL));
-
     while (1) {
         sleep(TIME_SLICE_ALARM);  // 500 ms = 0.5 segundos
 
         // Envia IRQ0 (Time Slice)
         write(pipefd[1], "T", 1);
 
+        srand(time(NULL));
+
         // Gera IRQ1 com probabilidade P_1 = 0.1 (10%)
-        if ((rand() % 100) < 10) {
+        if ((rand() % 100) < 100) {
+            printf("enviando IRQ1\n");
             write(pipefd[1], "I1", 2);  // Envia interrupção de E/S para dispositivo D1
         }
 
