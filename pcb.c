@@ -6,6 +6,8 @@
 #include <sys/wait.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 
 /*
 - verificar se o syscall está bloqueando corretamente e fazer a parte do "Time-sharing" do pdf
@@ -17,6 +19,7 @@
 #define MAX_PC 10
 #define TIME_SLICE_ALARM 3
 #define QUEUE_SIZE MAX_PROCESSES
+#define FIFO_PATH "/tmp/my_fifo" // Caminho da FIFO
 
 // Estrutura PCB (Process Control Block)
 typedef struct {
@@ -27,23 +30,42 @@ typedef struct {
 } PCB;
 
 PCB *pcbs;  // Array para armazenar os PCBs
+
 int *current_process = 0; // Processo que está executando
 
 // Pipes para comunicação entre kernel_sim e inter_controller_sim
 int pipefd[2];
 
-int device1_fila[QUEUE_SIZE], device2_fila[QUEUE_SIZE];
-int d1_topo = 0, d1_fim = 0, d2_topo = 0, d2_fim = 0;
+int *device1_fila, *device2_fila;
+int d1_topo, d2_topo;
 
-void insere_fila(int *fila, int *fim, int pid) {
-    fila [*fim] = pid;
-    *fim = (*fim + 1) % QUEUE_SIZE;
+void insere_fila(int *fila, int pid) {
+    for (int i = 0; i < QUEUE_SIZE; i++) {
+        if (fila[i] == -1) {  // Encontra o primeiro espaço vazio (-1)
+            fila[i] = pid;  // Adiciona o processo na posição encontrada
+            return;
+        }
+    }
 }
 
-int remove_fila(int *fila, int *cabeca) {
-    int pid = fila[*cabeca];
-    *cabeca = (*cabeca + 1) % QUEUE_SIZE;
-    return pid;
+int remove_fila(int *fila) {
+    int topo = fila[0];
+    fila[0] = -1;
+
+    // Reorganiza a fila para mover os espaços vazios (-1) para o final
+    for (int i = 0; i < QUEUE_SIZE- 1; i++) {
+        if (fila[i] == -1) {
+            for (int j = i + 1; j < QUEUE_SIZE; j++) {
+                if (fila[j] != -1) {
+                    fila[i] = fila[j];
+                    fila[j] = -1;
+                    break;
+                }
+            }
+        }
+    }
+
+    return topo;
 }
 
 // Simulação de syscall
@@ -53,10 +75,10 @@ void sigrtmin_handler(int sig) {
     pcbs[*current_process].waiting_device = rand() % 2 + 1; // Dispositivo aleatório D1 ou D2
 
     if(pcbs[*current_process].waiting_device == 1){
-        insere_fila(device1_fila, &d1_fim, *current_process);
+        insere_fila(device1_fila, *current_process);
     }
     else{
-        insere_fila(device2_fila, &d2_fim, *current_process);
+        insere_fila(device2_fila, *current_process);
     }
 
     raise(SIGSTOP); // Para o processo
@@ -84,24 +106,20 @@ void irq_handler(int sig) {
     } 
     else if (sig == SIGUSR1) {
         // Desbloquear processo esperando pelo dispositivo 1 (D1)
-        printf("o q tem nos d1: %d--%d\n",d1_topo,d1_fim);
-        if (device1_fila) {
-            int pid = remove_fila(device1_fila, &d1_topo);
+        if (device1_fila[0] != -1) {
+            int pid = remove_fila(device1_fila);
             printf("Processo %d desbloqueado após E/S (Dispositivo 1)\n", pid);
             pcbs[pid].state = 0;
             pcbs[pid].waiting_device = 0;
-            kill(pcbs[pid].pid, SIGCONT);  // Libera o processo
         }
     }
     else if (sig == SIGUSR2) {
         // Desbloquear processo esperando pelo dispositivo 2 (D2)
-        printf("o q tem nos d2: %d--%d\n",d2_topo,d2_fim);
-        if (device2_fila) {
-            int pid = remove_fila(device2_fila, &d2_topo);
+        if (device2_fila[0] != -1) {
+            int pid = remove_fila(device2_fila);
             printf("Processo %d desbloqueado após E/S (Dispositivo 2)\n", pid);
             pcbs[pid].state = 0;
             pcbs[pid].waiting_device = 0;
-            kill(pcbs[pid].pid, SIGCONT);  // Libera o processo
         }
     }
 
@@ -120,10 +138,8 @@ void create_processes() {
                 pcbs[i].state = 1;
                 printf("Processo %d: executando, PC=%d\n", i, pcbs[i].pc);
                 sleep(1);  // Simula tempo de execução
-                int x;
                 srand(time(NULL));
-                if (( x = (rand() % 100)) < 15) {  // Simula uma syscall aleatória
-                    printf("%d\n", x);
+                if ((rand() % 100) < 15) {  // Simula uma syscall aleatória
                     raise(SIGRTMIN);  // Envia o sinal de syscall
                 }
             }
@@ -151,17 +167,20 @@ void kernel_sim() {
     kill(pcbs[2].pid, SIGSTOP);
     pcbs[0].state = 1;
 
-    char buffer[2];
+    char buffer[1];
+    int fifo_fd = open(FIFO_PATH, O_RDONLY);
     while (1) {
-        read(pipefd[0], buffer, 2);  // Lê a interrupção enviada por inter_controller_sim
+        read(pipefd[0], buffer, 1);  // Lê a interrupção enviada por inter_controller_sim
+        printf("Recebido: %s\n", buffer); // Adicione esta linha para debug
 
         if (buffer[0] == 'T') {  // Timer IRQ (Time Slice)
             raise(SIGALRM);
-        } else if (buffer[0] == 'I' && buffer[1] == '1') {  // Interrupção de E/S (Dispositivo D1)
+        } else if (buffer[0] == '1') {  // Interrupção de E/S (Dispositivo D1)
             printf("recebendo IRQ1\n");
             raise(SIGUSR1);
-        } else if (buffer[0] == 'I' && buffer[1] == '2') {  // Interrupção de E/S (Dispositivo D2)
+        } else if (buffer[0] == '2') {  // Interrupção de E/S (Dispositivo D2)
             printf("recebendo IRQ2\n");
+            fflush(stdout);
             raise(SIGUSR2);
         }
     }
@@ -169,6 +188,7 @@ void kernel_sim() {
 
 
 void inter_controller_sim() {
+    int fifo_fd = open(FIFO_PATH, O_WRONLY);
     while (1) {
         sleep(TIME_SLICE_ALARM);  // 500 ms = 0.5 segundos
 
@@ -178,16 +198,19 @@ void inter_controller_sim() {
         srand(time(NULL));
 
         // Gera IRQ1 com probabilidade P_1 = 0.1 (10%)
-        if ((rand() % 100) < 100) {
+        if ((rand() % 100) < 10) {
             printf("enviando IRQ1\n");
-            write(pipefd[1], "I1", 2);  // Envia interrupção de E/S para dispositivo D1
+            write(pipefd[1], "1", 1);  // Envia interrupção de E/S para dispositivo D1
         }
 
         // Gera IRQ2 com probabilidade P_2 = 0.05 (5%)
-        if ((rand() % 100) < 100) {
-            write(pipefd[1], "I2", 2);  // Envia interrupção de E/S para dispositivo D2
+        if ((rand() % 100) < 5) {
+            printf("enviando IRQ2\n");
+            write(pipefd[1], "2", 1);  // Envia interrupção de E/S para dispositivo D2
         }
     }
+
+    close(fifo_fd);
 }
 
 
@@ -197,15 +220,26 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
+    mkfifo(FIFO_PATH, 0666);
+
     int shm_id = shmget(1111, sizeof(int), IPC_CREAT | 0666);
     current_process = (int *)shmat(shm_id, NULL, 0);
     *current_process = 0;  // Inicializa o processo atual
 
-    // int shm_d1fila = shmget(1112, sizeof(device1_fila), IPC_CREAT | 0666);
-    // device1_fila = (int *)shmat(shm_d1fila, NULL, 0);  // Associa a fila do device 1
+    int shm_pcbs = shmget(1112, sizeof(PCB) * MAX_PROCESSES, IPC_CREAT | 0666);
+    pcbs = (PCB *)shmat(shm_pcbs, NULL, 0);
 
-    // int shm_d2fila = shmget(1112, sizeof(device2_fila), IPC_CREAT | 0666);
-    // device2_fila = (int *)shmat(shm_d2fila, NULL, 0);  // Associa a fila do device 1
+    int shm_device1_fila = shmget(1114, sizeof(int) * QUEUE_SIZE, IPC_CREAT | 0666);
+    device1_fila = (int *)shmat(shm_device1_fila, NULL, 0);
+
+    // Criar segmento de memória compartilhada para device2_fila
+    int shm_device2_fila = shmget(1115, sizeof(int) * QUEUE_SIZE, IPC_CREAT | 0666);
+    device2_fila = (int *)shmat(shm_device2_fila, NULL, 0);
+
+    for(int i = 0; i<QUEUE_SIZE; i++){
+        device1_fila[i] = -1;
+        device2_fila[i] = -1;
+    }
 
     int pid = fork();
     if (pid == 0) {
@@ -221,8 +255,16 @@ int main() {
     shmdt(current_process);  // Desanexa a memória compartilhada
     shmctl(shm_id, IPC_RMID, NULL);  // Remove o segmento de memória compartilhada
 
-    shmdt(pcbs);  // Desanexa a memória compartilhada
-    shmctl(shm_pcb, IPC_RMID, NULL);  // Libera a memória
+    shmdt(pcbs);
+    shmctl(shm_pcbs, IPC_RMID, NULL);
+
+    // Desanexa as filas de memória compartilhada
+    shmdt(device1_fila);
+    shmdt(device2_fila);
+
+    // Remove os segmentos de memória compartilhada das filas
+    shmctl(shm_device1_fila, IPC_RMID, NULL);
+    shmctl(shm_device2_fila, IPC_RMID, NULL);
 
     return 0;
 }
