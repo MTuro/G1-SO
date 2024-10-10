@@ -84,20 +84,24 @@ void irq_handler(int sig) {
     } 
     else if (sig == SIGUSR1) {
         // Desbloquear processo esperando pelo dispositivo 1 (D1)
-        if (d1_topo != d1_fim) {
+        printf("o q tem nos d1: %d--%d\n",d1_topo,d1_fim);
+        if (device1_fila) {
             int pid = remove_fila(device1_fila, &d1_topo);
             printf("Processo %d desbloqueado após E/S (Dispositivo 1)\n", pid);
             pcbs[pid].state = 0;
             pcbs[pid].waiting_device = 0;
+            kill(pcbs[pid].pid, SIGCONT);  // Libera o processo
         }
-    } 
+    }
     else if (sig == SIGUSR2) {
         // Desbloquear processo esperando pelo dispositivo 2 (D2)
-        if (d2_topo != d2_fim) {
+        printf("o q tem nos d2: %d--%d\n",d2_topo,d2_fim);
+        if (device2_fila) {
             int pid = remove_fila(device2_fila, &d2_topo);
             printf("Processo %d desbloqueado após E/S (Dispositivo 2)\n", pid);
             pcbs[pid].state = 0;
             pcbs[pid].waiting_device = 0;
+            kill(pcbs[pid].pid, SIGCONT);  // Libera o processo
         }
     }
 
@@ -118,7 +122,7 @@ void create_processes() {
                 sleep(1);  // Simula tempo de execução
                 int x;
                 srand(time(NULL));
-                if (( x = (rand() % 100)) < 20) {  // Simula uma syscall aleatória
+                if (( x = (rand() % 100)) < 15) {  // Simula uma syscall aleatória
                     printf("%d\n", x);
                     raise(SIGRTMIN);  // Envia o sinal de syscall
                 }
@@ -157,6 +161,7 @@ void kernel_sim() {
             printf("recebendo IRQ1\n");
             raise(SIGUSR1);
         } else if (buffer[0] == 'I' && buffer[1] == '2') {  // Interrupção de E/S (Dispositivo D2)
+            printf("recebendo IRQ2\n");
             raise(SIGUSR2);
         }
     }
@@ -179,7 +184,7 @@ void inter_controller_sim() {
         }
 
         // Gera IRQ2 com probabilidade P_2 = 0.05 (5%)
-        if ((rand() % 100) < 5) {
+        if ((rand() % 100) < 100) {
             write(pipefd[1], "I2", 2);  // Envia interrupção de E/S para dispositivo D2
         }
     }
@@ -196,8 +201,11 @@ int main() {
     current_process = (int *)shmat(shm_id, NULL, 0);
     *current_process = 0;  // Inicializa o processo atual
 
-    int shm_pcb = shmget(1112, sizeof(PCB) * MAX_PROCESSES, IPC_CREAT | 0666);
-    pcbs = (PCB *)shmat(shm_pcb, NULL, 0);  // Associa ao PCB
+    // int shm_d1fila = shmget(1112, sizeof(device1_fila), IPC_CREAT | 0666);
+    // device1_fila = (int *)shmat(shm_d1fila, NULL, 0);  // Associa a fila do device 1
+
+    // int shm_d2fila = shmget(1112, sizeof(device2_fila), IPC_CREAT | 0666);
+    // device2_fila = (int *)shmat(shm_d2fila, NULL, 0);  // Associa a fila do device 1
 
     int pid = fork();
     if (pid == 0) {
