@@ -10,16 +10,18 @@
 #include <sys/stat.h>
 
 /*
-- verificar se o syscall está bloqueando corretamente e fazer a parte do "Time-sharing" do pdf
-- fila de processos bloqueados para cada um dos dispositivos D1 e D2
+FUNCIONOUUUU, agora:
+- fazer a parte do "Time-sharing" do pdf
 - ver melhor a parte de "Visualizando os estados dos processos" no pdf
+- arrumar os prints (ta printando sempre "processo i bloquado/interrompido" 
+quando ta esperando alugm processo ser desbloqueado)
+- ver pq nao funciona com mais de 3 processos
 */
 
 #define MAX_PROCESSES 3
 #define MAX_PC 10
 #define TIME_SLICE_ALARM 3
 #define QUEUE_SIZE MAX_PROCESSES
-#define FIFO_PATH "/tmp/my_fifo" // Caminho da FIFO
 
 // Estrutura PCB (Process Control Block)
 typedef struct {
@@ -95,14 +97,25 @@ void irq_handler(int sig) {
             pcbs[*current_process].state = 0;
         }
 
-        do {
-            *current_process = (*current_process + 1) % MAX_PROCESSES;
-        } while (pcbs[*current_process].state == 3 || pcbs[*current_process].state == 2);
+        int processos_parados = 0;
 
-        if (pcbs[*current_process].state != 3) {
+        *current_process = (*current_process + 1) % MAX_PROCESSES;
+               
+        while (pcbs[*current_process].state == 3 || pcbs[*current_process].state == 2){
+            processos_parados++;
+            if (processos_parados == 3){
+                break;
+            }
+
+            *current_process = (*current_process + 1) % MAX_PROCESSES;
+        }
+        
+
+        if (pcbs[*current_process].state == 0) {
             kill(pcbs[*current_process].pid, SIGCONT);
             pcbs[*current_process].state = 1;
         }
+
     } 
     else if (sig == SIGUSR1) {
         // Desbloquear processo esperando pelo dispositivo 1 (D1)
@@ -163,15 +176,14 @@ void kernel_sim() {
     create_processes();
 
     kill(pcbs[0].pid, SIGCONT);
-    kill(pcbs[1].pid, SIGSTOP);
-    kill(pcbs[2].pid, SIGSTOP);
+    for (int i = 1; i< MAX_PROCESSES; i++){
+        kill(pcbs[i].pid, SIGSTOP);
+    }
     pcbs[0].state = 1;
 
     char buffer[1];
-    int fifo_fd = open(FIFO_PATH, O_RDONLY);
     while (1) {
         read(pipefd[0], buffer, 1);  // Lê a interrupção enviada por inter_controller_sim
-        printf("Recebido: %s\n", buffer); // Adicione esta linha para debug
 
         if (buffer[0] == 'T') {  // Timer IRQ (Time Slice)
             raise(SIGALRM);
@@ -180,15 +192,23 @@ void kernel_sim() {
             raise(SIGUSR1);
         } else if (buffer[0] == '2') {  // Interrupção de E/S (Dispositivo D2)
             printf("recebendo IRQ2\n");
-            fflush(stdout);
             raise(SIGUSR2);
+        }
+        int processos_finalizados = 0;
+        for (int i = 0; i < MAX_PROCESSES; i++){
+            if (pcbs[i].state == 3)
+                processos_finalizados++;
+            
+        }
+
+        if (processos_finalizados == 3){
+            printf("Todos os processos foram finalizados\n");
         }
     }
 }
 
 
 void inter_controller_sim() {
-    int fifo_fd = open(FIFO_PATH, O_WRONLY);
     while (1) {
         sleep(TIME_SLICE_ALARM);  // 500 ms = 0.5 segundos
 
@@ -209,8 +229,6 @@ void inter_controller_sim() {
             write(pipefd[1], "2", 1);  // Envia interrupção de E/S para dispositivo D2
         }
     }
-
-    close(fifo_fd);
 }
 
 
@@ -219,8 +237,6 @@ int main() {
         perror("pipe");
         exit(EXIT_FAILURE);
     }
-
-    mkfifo(FIFO_PATH, 0666);
 
     int shm_id = shmget(1111, sizeof(int), IPC_CREAT | 0666);
     current_process = (int *)shmat(shm_id, NULL, 0);
@@ -243,13 +259,14 @@ int main() {
 
     int pid = fork();
     if (pid == 0) {
-        // Processo filho: inter_controller_sim
-        close(pipefd[0]);  // Fecha o lado de leitura do pipe
-        inter_controller_sim();
-    } else {
         // Processo pai: kernel_sim
         close(pipefd[1]);  // Fecha o lado de escrita do pipe
         kernel_sim();
+    } else {
+        
+        // Processo filho: inter_controller_sim
+        close(pipefd[0]);  // Fecha o lado de leitura do pipe
+        inter_controller_sim();
     }
 
     shmdt(current_process);  // Desanexa a memória compartilhada
