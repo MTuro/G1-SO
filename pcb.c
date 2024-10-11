@@ -16,7 +16,7 @@ FUNCIONOUUUU, agora:
 quando ta esperando alugm processo ser desbloqueado)
 */
 
-#define MAX_PROCESSES 20
+#define MAX_PROCESSES 3
 #define MAX_PC 10
 #define TIME_SLICE_ALARM 3
 #define QUEUE_SIZE MAX_PROCESSES
@@ -92,7 +92,8 @@ void irq_handler(int sig) {
 
         if (pcbs[*current_process].state == 2) {
             printf("Processo %d está bloqueado aguardando o dispositivo %d\n", *current_process, pcbs[*current_process].waiting_device);
-        } else if (pcbs[*current_process].state == 1){
+        } 
+        else if (pcbs[*current_process].state == 1){
             kill(pcbs[*current_process].pid, SIGSTOP);
             pcbs[*current_process].state = 0;
         }
@@ -158,7 +159,8 @@ void create_processes() {
             pcbs[i].state = 3; // Estado finalizado
             printf("Processo %d: Finalizado\n", i);
             exit(0);
-        } else {
+        } 
+        else {
             // Preenche o PCB do processo pai
             pcbs[i].pid = pid;
             pcbs[i].pc = 0;
@@ -187,10 +189,12 @@ void kernel_sim() {
 
         if (buffer[0] == 'T') {  // Timer IRQ (Time Slice)
             raise(SIGALRM);
-        } else if (buffer[0] == '1') {  // Interrupção de E/S (Dispositivo D1)
+        } 
+        else if (buffer[0] == '1') {  // Interrupção de E/S (Dispositivo D1)
             printf("recebendo IRQ1\n");
             raise(SIGUSR1);
-        } else if (buffer[0] == '2') {  // Interrupção de E/S (Dispositivo D2)
+        } 
+        else if (buffer[0] == '2') {  // Interrupção de E/S (Dispositivo D2)
             printf("recebendo IRQ2\n");
             raise(SIGUSR2);
         }
@@ -264,12 +268,10 @@ int main() {
 
     shm_device1_fila = shmget(1114, sizeof(int) * QUEUE_SIZE, IPC_CREAT | 0666);
     device1_fila = (int *)shmat(shm_device1_fila, NULL, 0);
-    printf("%p\n", device1_fila);
 
     // Criar segmento de memória compartilhada para device2_fila
     shm_device2_fila = shmget(1115, sizeof(int) * QUEUE_SIZE, IPC_CREAT | 0666);
     device2_fila = (int *)shmat(shm_device2_fila, NULL, 0);
-    printf("%p\n", device2_fila);
 
     for(int i = 0; i<QUEUE_SIZE; i++){
         
