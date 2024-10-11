@@ -25,8 +25,8 @@ typedef struct {
     int pc;             // Program counter
     int state;          // Estados: 0 = pronto, 1 = executando, 2 = bloqueado, 3 = finalizado
     int waiting_device; // 0 = nenhum, 1 = D1, 2 = D2
-    int access_d1;      // acesso 
-    int access_d2;
+    int access_d1;      // Quantida de acesso no Device 1
+    int access_d2;      // Quantida de acesso no Device 2
 } PCB;
 
 PCB *pcbs;  // Array para armazenar os PCBs
@@ -39,7 +39,7 @@ int pipefd[2];
 int *device1_fila, *device2_fila;
 int d1_topo, d2_topo;
 
-int shm_id, shm_pcbs, shm_device1_fila, shm_device2_fila;
+int shm_id, shm_pcbs, shm_device1_fila, shm_device2_fila;  // id's da memoria compartilhada
 
 void insere_fila(int *fila, int pid) {
     for (int i = 0; i < QUEUE_SIZE; i++) {
@@ -159,11 +159,12 @@ void kernel_sim() {
                 kill(pcbs[*current_process].pid, SIGSTOP);
                 pcbs[*current_process].state = 0;
             }
-
+            
+            // alterna para o processo seguinte
             int processos_parados = 0;
-
             *current_process = (*current_process + 1) % MAX_PROCESSES;
                 
+            //encontra o proximo processo que nao esta finalizado ou bloqueado
             while (pcbs[*current_process].state == 3 || pcbs[*current_process].state == 2 || pcbs[*current_process].state == 4){
                 processos_parados++;
                 if (processos_parados == MAX_PROCESSES){
@@ -172,6 +173,7 @@ void kernel_sim() {
                 *current_process = (*current_process + 1) % MAX_PROCESSES;
             }
 
+            // reinicia o processo selecionado
             if (pcbs[*current_process].state == 0) {
                 kill(pcbs[*current_process].pid, SIGCONT);
                 pcbs[*current_process].state = 1;
@@ -235,16 +237,20 @@ void inter_controller_sim() {
 }
 
 void end_handler(int sig){
-    printf("\nInterrompendo a simulação. Estado dos processos:\n");
+    // Função handler para finalizar a simulação e exibir o estado dos processos
     
-    for (int i = 0; i < MAX_PROCESSES; i++) {
+    printf("\nInterrompendo a simulação. Estado dos processos:\n");
+
+        for (int i = 0; i < MAX_PROCESSES; i++) {
         printf("Processo %d - PC=%d, Estado=%d", i, pcbs[i].pc, pcbs[i].state);
         
         if (pcbs[i].state == 2) {
             printf(", Bloqueado no dispositivo %d", pcbs[i].waiting_device);
-        } else if (pcbs[i].state == 1) {
+        } 
+        else if (pcbs[i].state == 1) {
             printf(", Executando");
-        } else if (pcbs[i].state == 3) {
+        } 
+        else if (pcbs[i].state == 3) {
             printf(", Finalizado");
         }
         
