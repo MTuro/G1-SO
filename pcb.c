@@ -11,14 +11,12 @@
 
 /*
 FUNCIONOUUUU, agora:
-- fazer a parte do "Time-sharing" do pdf
 - ver melhor a parte de "Visualizando os estados dos processos" no pdf
 - arrumar os prints (ta printando sempre "processo i bloquado/interrompido" 
 quando ta esperando alugm processo ser desbloqueado)
-- ver pq nao funciona com mais de 3 processos
 */
 
-#define MAX_PROCESSES 3
+#define MAX_PROCESSES 20
 #define MAX_PC 10
 #define TIME_SLICE_ALARM 3
 #define QUEUE_SIZE MAX_PROCESSES
@@ -40,6 +38,8 @@ int pipefd[2];
 
 int *device1_fila, *device2_fila;
 int d1_topo, d2_topo;
+
+int shm_id, shm_pcbs, shm_device1_fila, shm_device2_fila;
 
 void insere_fila(int *fila, int pid) {
     for (int i = 0; i < QUEUE_SIZE; i++) {
@@ -103,13 +103,13 @@ void irq_handler(int sig) {
                
         while (pcbs[*current_process].state == 3 || pcbs[*current_process].state == 2){
             processos_parados++;
-            if (processos_parados == 3){
+            if (processos_parados == MAX_PROCESSES){
                 break;
             }
 
             *current_process = (*current_process + 1) % MAX_PROCESSES;
         }
-        
+       
 
         if (pcbs[*current_process].state == 0) {
             kill(pcbs[*current_process].pid, SIGCONT);
@@ -135,14 +135,13 @@ void irq_handler(int sig) {
             pcbs[pid].waiting_device = 0;
         }
     }
-
 }
-
 
 void create_processes() {
     for (int i = 0; i < MAX_PROCESSES; i++) {
         int pid = fork();
         if (pid == 0) {
+            raise(SIGSTOP);
             signal(SIGRTMIN, sigrtmin_handler);  // Configura syscall handler para processo filho
             signal(SIGCONT, SIG_DFL);  // Habilita continuar com SIGCONT
 
@@ -175,10 +174,11 @@ void kernel_sim() {
 
     create_processes();
 
-    kill(pcbs[0].pid, SIGCONT);
     for (int i = 1; i< MAX_PROCESSES; i++){
         kill(pcbs[i].pid, SIGSTOP);
     }
+    kill(pcbs[0].pid, SIGCONT);
+    
     pcbs[0].state = 1;
 
     char buffer[1];
@@ -198,10 +198,9 @@ void kernel_sim() {
         for (int i = 0; i < MAX_PROCESSES; i++){
             if (pcbs[i].state == 3)
                 processos_finalizados++;
-            
         }
 
-        if (processos_finalizados == 3){
+        if (processos_finalizados == MAX_PROCESSES){
             printf("Todos os processos foram finalizados\n");
         }
     }
@@ -231,44 +230,7 @@ void inter_controller_sim() {
     }
 }
 
-
-int main() {
-    if (pipe(pipefd) == -1) {
-        perror("pipe");
-        exit(EXIT_FAILURE);
-    }
-
-    int shm_id = shmget(1111, sizeof(int), IPC_CREAT | 0666);
-    current_process = (int *)shmat(shm_id, NULL, 0);
-    *current_process = 0;  // Inicializa o processo atual
-
-    int shm_pcbs = shmget(1112, sizeof(PCB) * MAX_PROCESSES, IPC_CREAT | 0666);
-    pcbs = (PCB *)shmat(shm_pcbs, NULL, 0);
-
-    int shm_device1_fila = shmget(1114, sizeof(int) * QUEUE_SIZE, IPC_CREAT | 0666);
-    device1_fila = (int *)shmat(shm_device1_fila, NULL, 0);
-
-    // Criar segmento de memória compartilhada para device2_fila
-    int shm_device2_fila = shmget(1115, sizeof(int) * QUEUE_SIZE, IPC_CREAT | 0666);
-    device2_fila = (int *)shmat(shm_device2_fila, NULL, 0);
-
-    for(int i = 0; i<QUEUE_SIZE; i++){
-        device1_fila[i] = -1;
-        device2_fila[i] = -1;
-    }
-
-    int pid = fork();
-    if (pid == 0) {
-        // Processo pai: kernel_sim
-        close(pipefd[1]);  // Fecha o lado de escrita do pipe
-        kernel_sim();
-    } else {
-        
-        // Processo filho: inter_controller_sim
-        close(pipefd[0]);  // Fecha o lado de leitura do pipe
-        inter_controller_sim();
-    }
-
+void end_handler(int sig){
     shmdt(current_process);  // Desanexa a memória compartilhada
     shmctl(shm_id, IPC_RMID, NULL);  // Remove o segmento de memória compartilhada
 
@@ -282,6 +244,49 @@ int main() {
     // Remove os segmentos de memória compartilhada das filas
     shmctl(shm_device1_fila, IPC_RMID, NULL);
     shmctl(shm_device2_fila, IPC_RMID, NULL);
+
+    _exit(0);
+}
+
+int main() {
+    signal(SIGINT, end_handler);
+    if (pipe(pipefd) == -1) {
+        perror("pipe\n");
+        exit(EXIT_FAILURE);
+    }
+
+    shm_id = shmget(1111, sizeof(int), IPC_CREAT | 0666);
+    current_process = (int *)shmat(shm_id, NULL, 0);
+    *current_process = 0;  // Inicializa o processo atual
+
+    shm_pcbs = shmget(1500, sizeof(PCB) * MAX_PROCESSES, IPC_CREAT | 0666);
+    pcbs = (PCB *)shmat(shm_pcbs, NULL, 0);
+
+    shm_device1_fila = shmget(1114, sizeof(int) * QUEUE_SIZE, IPC_CREAT | 0666);
+    device1_fila = (int *)shmat(shm_device1_fila, NULL, 0);
+    printf("%p\n", device1_fila);
+
+    // Criar segmento de memória compartilhada para device2_fila
+    shm_device2_fila = shmget(1115, sizeof(int) * QUEUE_SIZE, IPC_CREAT | 0666);
+    device2_fila = (int *)shmat(shm_device2_fila, NULL, 0);
+    printf("%p\n", device2_fila);
+
+    for(int i = 0; i<QUEUE_SIZE; i++){
+        
+        device1_fila[i] = -1;
+        device2_fila[i] = -1;
+    }
+
+    int pid = fork();
+    if (pid == 0) {
+        // Processo pai: kernel_sim
+        close(pipefd[1]); // Fecha o lado de escrita do pipe
+        kernel_sim();
+    } else {
+        // Processo filho: inter_controller_sim
+        close(pipefd[0]); // Fecha o lado de leitura do pipe
+        inter_controller_sim();
+    }
 
     return 0;
 }
