@@ -16,7 +16,7 @@ FUNCIONOUUUU, agora:
 quando ta esperando alugm processo ser desbloqueado)
 */
 
-#define MAX_PROCESSES 3
+#define MAX_PROCESSES 5
 #define MAX_PC 10
 #define TIME_SLICE_ALARM 3
 #define QUEUE_SIZE MAX_PROCESSES
@@ -88,12 +88,12 @@ void sigrtmin_handler(int sig) {
 
 void irq_handler(int sig) {
     if (sig == SIGALRM) {
-        printf("IRQ0 (Time Slice): processo %d interrompido\n", *current_process);
-
         if (pcbs[*current_process].state == 2) {
             printf("Processo %d está bloqueado aguardando o dispositivo %d\n", *current_process, pcbs[*current_process].waiting_device);
-        } 
+            pcbs[*current_process].state = 4; // ainda bloqueado
+        }   
         else if (pcbs[*current_process].state == 1){
+            printf("IRQ0 (Time Slice): processo %d interrompido\n", *current_process);
             kill(pcbs[*current_process].pid, SIGSTOP);
             pcbs[*current_process].state = 0;
         }
@@ -102,7 +102,7 @@ void irq_handler(int sig) {
 
         *current_process = (*current_process + 1) % MAX_PROCESSES;
                
-        while (pcbs[*current_process].state == 3 || pcbs[*current_process].state == 2){
+        while (pcbs[*current_process].state == 3 || pcbs[*current_process].state == 2 || pcbs[*current_process].state == 4){
             processos_parados++;
             if (processos_parados == MAX_PROCESSES){
                 break;
@@ -120,21 +120,19 @@ void irq_handler(int sig) {
     } 
     else if (sig == SIGUSR1) {
         // Desbloquear processo esperando pelo dispositivo 1 (D1)
-        if (device1_fila[0] != -1) {
-            int pid = remove_fila(device1_fila);
-            printf("Processo %d desbloqueado após E/S (Dispositivo 1)\n", pid);
-            pcbs[pid].state = 0;
-            pcbs[pid].waiting_device = 0;
-        }
+        int pid = remove_fila(device1_fila);
+        printf("Processo %d desbloqueado após E/S (Dispositivo 1)\n", pid);
+        pcbs[pid].state = 0;
+        pcbs[pid].waiting_device = 0;
     }
+    
     else if (sig == SIGUSR2) {
         // Desbloquear processo esperando pelo dispositivo 2 (D2)
-        if (device2_fila[0] != -1) {
-            int pid = remove_fila(device2_fila);
-            printf("Processo %d desbloqueado após E/S (Dispositivo 2)\n", pid);
-            pcbs[pid].state = 0;
-            pcbs[pid].waiting_device = 0;
-        }
+        int pid = remove_fila(device2_fila);
+        printf("Processo %d desbloqueado após E/S (Dispositivo 2)\n", pid);
+        pcbs[pid].state = 0;
+        pcbs[pid].waiting_device = 0;
+    
     }
 }
 
@@ -175,10 +173,6 @@ void kernel_sim() {
     signal(SIGUSR2, irq_handler);  // Dispositivo D2 (IRQ2)
 
     create_processes();
-
-    for (int i = 1; i< MAX_PROCESSES; i++){
-        kill(pcbs[i].pid, SIGSTOP);
-    }
     kill(pcbs[0].pid, SIGCONT);
     
     pcbs[0].state = 1;
@@ -192,11 +186,16 @@ void kernel_sim() {
         } 
         else if (buffer[0] == '1') {  // Interrupção de E/S (Dispositivo D1)
             printf("recebendo IRQ1\n");
-            raise(SIGUSR1);
+            if (device1_fila[0] != -1){
+                raise(SIGUSR1);
+            }
+            
         } 
         else if (buffer[0] == '2') {  // Interrupção de E/S (Dispositivo D2)
             printf("recebendo IRQ2\n");
+            if (device2_fila[0] != -1) {
             raise(SIGUSR2);
+            }
         }
         int processos_finalizados = 0;
         for (int i = 0; i < MAX_PROCESSES; i++){
