@@ -21,10 +21,10 @@
 typedef struct {
     int pid;            // PID do processo
     int pc;             // Program counter
-    int state;          // Estados: 0 = pronto, 1 = executando, 2 = bloqueado, 3 = finalizado
+    int state;          // Estados: 0 = pronto, 1 = executando, 2 = recém bloqueado, 3 = finalizado, 4 = bloqueado e aguardando E/S
     int waiting_device; // 0 = nenhum, 1 = D1, 2 = D2
-    int access_d1;      // Quantida de acesso no Device 1
-    int access_d2;      // Quantida de acesso no Device 2
+    int access_d1;      // contador de acesso no dispositivo 1
+    int access_d2;      // contador de acesso no dispositivo 2
 } PCB;
 
 PCB *pcbs;  // Array para armazenar os PCBs
@@ -34,6 +34,7 @@ int *current_process = 0; // Processo que está executando
 // Pipes para comunicação entre kernel_sim e inter_controller_sim
 int pipefd[2];
 
+// Filas para os guardar os processos em cada dispositivo
 int *device1_fila, *device2_fila;
 int d1_topo, d2_topo;
 
@@ -226,7 +227,7 @@ void kernel_sim() {
 void inter_controller_sim() {
     signal(SIGINT, end_handler);
     while (1) {
-        sleep(TIME_SLICE_ALARM);  // 500 ms = 0.5 segundos
+        sleep(TIME_SLICE_ALARM);  // 2 segundos
 
         // Envia IRQ0 (Time Slice)
         write(pipefd[1], "T", 1);
@@ -295,13 +296,16 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
+    // Criar segmento de memória compartilhada para processo atual
     shm_id = shmget(1111, sizeof(int), IPC_CREAT | 0666);
     current_process = (int *)shmat(shm_id, NULL, 0);
     *current_process = 0;  // Inicializa o processo atual
 
+    // Criar segmento de memória compartilhada para os PCBs
     shm_pcbs = shmget(1500, sizeof(PCB) * MAX_PROCESSES, IPC_CREAT | 0666);
     pcbs = (PCB *)shmat(shm_pcbs, NULL, 0);
 
+    // Criar segmento de memória compartilhada para device1_fila
     shm_device1_fila = shmget(1114, sizeof(int) * QUEUE_SIZE, IPC_CREAT | 0666);
     device1_fila = (int *)shmat(shm_device1_fila, NULL, 0);
 
