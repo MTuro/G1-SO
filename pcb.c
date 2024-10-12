@@ -12,11 +12,6 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
-/*
-FUNCIONOUUUU, agora:
-- ver pq quando volta do kill -STOP ele não volta normal :(
-*/
-
 #define MAX_PROCESSES 5
 #define MAX_PC 10
 #define TIME_SLICE_ALARM 2
