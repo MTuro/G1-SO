@@ -87,9 +87,11 @@ void sigrtmin_handler(int sig) {
 
     if(pcbs[*current_process].waiting_device == 1){
         insere_fila(device1_fila, *current_process);
+        pcbs[*current_process].access_d1++;
     }
     else{
         insere_fila(device2_fila, *current_process);
+        pcbs[*current_process].access_d2++;
     }
 
     raise(SIGSTOP); // Para o processo
@@ -102,7 +104,6 @@ void irq_handler(int sig) {
         printf("[IRQ1 Handler] Processo %d desbloqueado após E/S (Dispositivo 1)\n", pid);
         pcbs[pid].state = 0;
         pcbs[pid].waiting_device = 0;
-        pcbs[pid].access_d1++;
     }
     else if (sig == SIGUSR2) {
         // Desbloquear processo esperando pelo dispositivo 2 (D2)
@@ -110,7 +111,6 @@ void irq_handler(int sig) {
         printf("[IRQ2 Handler] Processo %d desbloqueado após E/S (Dispositivo 2)\n", pid);
         pcbs[pid].state = 0;
         pcbs[pid].waiting_device = 0;
-        pcbs[pid].access_d2++;
     }
 }
 
@@ -141,6 +141,8 @@ void create_processes() {
             pcbs[i].pid = pid;
             pcbs[i].pc = 0;
             pcbs[i].state = 0; // Pronto para execução
+            pcbs[i].access_d1 = 0;
+            pcbs[i].access_d2 = 0;
         }
     }
 }
@@ -255,7 +257,7 @@ void end_handler(int sig){
         for (int i = 0; i < MAX_PROCESSES; i++) {
         printf("Processo %d - PC=%d, Estado=%d", i, pcbs[i].pc, pcbs[i].state);
         
-        if (pcbs[i].state == 2) {
+        if (pcbs[i].state == 2 || pcbs[i].state == 4) {
             printf(", Bloqueado no dispositivo %d", pcbs[i].waiting_device);
         } 
         else if (pcbs[i].state == 1) {
@@ -263,6 +265,9 @@ void end_handler(int sig){
         } 
         else if (pcbs[i].state == 3) {
             printf(", Finalizado");
+        }
+        else if (pcbs[i].state == 0) {
+            printf(", Esperando");
         }
         
         printf(", Acessos D1=%d, Acessos D2=%d\n", pcbs[i].access_d1, pcbs[i].access_d2);
@@ -319,7 +324,11 @@ int main() {
     } 
     else {
         // Processo filho: inter_controller_sim
-        printf("pid do inter_controller: %d\n", getpid());
+        FILE *file = fopen("pidfile.txt", "w");
+        fprintf(file, "%d\n", getpid());
+        fclose(file);
+
+        printf("\npid do inter_controller: %d\n", getpid());
         close(pipefd[0]); // Fecha o lado de leitura do pipe
         inter_controller_sim();
     }
