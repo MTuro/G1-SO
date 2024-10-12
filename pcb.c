@@ -41,6 +41,15 @@ int d1_topo, d2_topo;
 
 int shm_id, shm_pcbs, shm_device1_fila, shm_device2_fila;  // id's da memoria compartilhada
 
+void insere_fila(int *fila, int pid);
+int remove_fila(int *fila);
+void sigrtmin_handler(int sig);
+void irq_handler(int sig);
+void create_processes();
+void kernel_sim();
+void inter_controller_sim();
+void end_handler(int sig);
+
 void insere_fila(int *fila, int pid) {
     for (int i = 0; i < QUEUE_SIZE; i++) {
         if (fila[i] == -1) {  // Encontra o primeiro espaço vazio (-1)
@@ -139,7 +148,8 @@ void create_processes() {
 void kernel_sim() {
     signal(SIGUSR1, irq_handler);  // Dispositivo D1 (IRQ1)
     signal(SIGUSR2, irq_handler);  // Dispositivo D2 (IRQ2)
-
+    signal(SIGINT, end_handler);
+    
     create_processes();
     kill(pcbs[0].pid, SIGCONT);
     
@@ -214,6 +224,7 @@ void kernel_sim() {
 
 
 void inter_controller_sim() {
+    signal(SIGINT, end_handler);
     while (1) {
         sleep(TIME_SLICE_ALARM);  // 500 ms = 0.5 segundos
 
@@ -305,12 +316,14 @@ int main() {
         // Processo pai: kernel_sim
         close(pipefd[1]); // Fecha o lado de escrita do pipe
         kernel_sim();
-    } else {
+    } 
+    else {
         // Processo filho: inter_controller_sim
         printf("pid do inter_controller: %d\n", getpid());
         close(pipefd[0]); // Fecha o lado de leitura do pipe
         inter_controller_sim();
     }
+
 
     return 0;
 }
