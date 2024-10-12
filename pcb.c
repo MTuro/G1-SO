@@ -1,3 +1,6 @@
+//Ana Luiza Pinto Marques - 2211960
+//Marcos Turo Ferandes Junior - 2211712
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -324,10 +327,6 @@ int main() {
     } 
     else {
         // Processo filho: inter_controller_sim
-        FILE *file = fopen("pidfile.txt", "w");
-        fprintf(file, "%d\n", getpid());
-        fclose(file);
-
         printf("\npid do inter_controller: %d\n", getpid());
         close(pipefd[0]); // Fecha o lado de leitura do pipe
         inter_controller_sim();

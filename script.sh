@@ -1,3 +1,6 @@
+#Ana Luiza Pinto Marques - 2211960
+#Marcos Turo Ferandes Junior - 2211712
+
 #!/bin/bash
 
 #para rodar :
@@ -12,9 +15,6 @@ gcc -o pcb pcb.c  # Substitua pelo nome do arquivo
 echo "Executando o programa..."
 ./pcb &  # Executa em segundo plano e cria um job controlado pelo shell
 PID=$!  # Pega o PID do processo que acabou de rodar
-
-# Salvar o PID do processo para uso futuro (opcional)
-echo $PID > pidfile.txt
 
 echo "Processo executando com PID $PID"
 
